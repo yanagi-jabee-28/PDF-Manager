@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>PDF Viewer</title>
+	<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/normalize/8.0.1/normalize.min.css">
+	<style>
+		body {
+			font-family: sans-serif;
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			background-color: #f0f0f0;
+		}
+
+		#pdf-container {
+			width: 80%;
+			max-width: 800px;
+			margin-top: 20px;
+			border: 1px solid #ccc;
+		}
+
+		canvas {
+			width: 100%;
+		}
+
+		#progress-container {
+			width: 80%;
+			max-width: 800px;
+			background-color: #ddd;
+			border-radius: 5px;
+			overflow: hidden;
+			margin-top: 10px;
+		}
+
+		#progress-bar {
+			height: 10px;
+			background-color: #4caf50;
+			width: 0%;
+		}
+	</style>
+</head>
+
+<body>
+	<h1>PDF Viewer</h1>
+	<input type="file" id="file-input">
+	<div>
+		<button id="prev-page">Previous</button>
+		<button id="next-page">Next</button>
+		<span>Page: <span id="page-num"></span> / <span id="page-count"></span></span>
+	</div>
+	<div id="pdf-container">
+		<canvas id="pdf-canvas"></canvas>
+	</div>
+
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.min.js"></script>
+	<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+
+	<hr>
+
+	<h2>Convert PDF to Images</h2>
+	<form id="convert-form" enctype="multipart/form-data">
+		<input type="file" name="file" id="convert-file-input">
+		<input type="submit" value="Convert and Download as ZIP">
+	</form>
+	<div id="progress-container">
+		<div id="progress-bar"></div>
+	</div>
+	<div id="status"></div>
+	<a href="#" id="download-link" style="display:none;">Download ZIP</a>
+
+	<script>
+		document.addEventListener('DOMContentLoaded', (event) => {
+			var socket = io.connect(location.protocol + '//' + document.domain + ':' + location.port);
+
+			socket.on('progress', function (msg) {
+				document.getElementById('status').innerHTML = msg.data;
+				document.getElementById('progress-bar').style.width = msg.data;
+			});
+
+			socket.on('done', function (msg) {
+				var downloadLink = document.getElementById('download-link');
+				downloadLink.href = msg.url;
+				downloadLink.style.display = 'block';
+			});
+
+			document.getElementById('convert-form').addEventListener('submit', function (e) {
+				e.preventDefault();
+				var fileInput = document.getElementById('convert-file-input');
+				var file = fileInput.files[0];
+				var formData = new FormData();
+				formData.append('file', file);
+
+				// Reset progress
+				document.getElementById('status').innerHTML = '';
+				document.getElementById('progress-bar').style.width = '0%';
+				document.getElementById('download-link').style.display = 'none';
+
+				fetch('/convert', {
+					method: 'POST',
+					body: formData
+				}).then(response => response.json()).then(data => {
+					if (data.url) {
+						var downloadLink = document.getElementById('download-link');
+						downloadLink.href = data.url;
+						downloadLink.style.display = 'block';
+						document.getElementById('status').innerHTML = "Done!";
+					}
+				});
+				socket.emit('convert', {});
+			});
+		});
+	</script>
+</body>
+
+</html>
