@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>PDFビューア＆PNGコンバーター</title>
+	<!-- Tailwind CSS for styling -->
+	<script src="https://cdn.tailwindcss.com"></script>
+	<!-- PDF.js library from Mozilla -->
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+	<!-- JSZip library for creating zip files -->
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+	<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+	<style>
+		body {
+			font-family: 'Inter', sans-serif;
+		}
+
+		/* Custom scrollbar for better aesthetics */
+		::-webkit-scrollbar {
+			width: 8px;
+			height: 8px;
+		}
+
+		::-webkit-scrollbar-track {
+			background: #f1f1f1;
+		}
+
+		::-webkit-scrollbar-thumb {
+			background: #888;
+			border-radius: 4px;
+		}
+
+		::-webkit-scrollbar-thumb:hover {
+			background: #555;
+		}
+
+		#pdf-canvas {
+			box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+			border: 1px solid #e2e8f0;
+		}
+
+		.loader {
+			border: 5px solid #f3f3f3;
+			border-top: 5px solid #3498db;
+			border-radius: 50%;
+			width: 50px;
+			height: 50px;
+			animation: spin 1s linear infinite;
+		}
+
+		@keyframes spin {
+			0% {
+				transform: rotate(0deg);
+			}
+
+			100% {
+				transform: rotate(360deg);
+			}
+		}
+	</style>
+</head>
+
+<body class="bg-gray-100 text-gray-800">
+
+	<div class="container mx-auto p-4 lg:p-8">
+		<!-- Header -->
+		<header class="text-center mb-8">
+			<h1 class="text-3xl md:text-4xl font-bold text-gray-900">PDFビューア＆PNGコンバーター</h1>
+			<p class="text-gray-600 mt-2">PDFファイルをアップロードして、閲覧、変換、ダウンロードができます。</p>
+		</header>
+
+		<!-- Main Content Area -->
+		<main class="bg-white rounded-xl shadow-lg p-4 md:p-6">
+			<!-- Top Controls -->
+			<div class="flex flex-wrap items-center justify-between gap-4 border-b border-gray-200 pb-4 mb-6">
+				<div>
+					<label for="pdf-upload"
+						class="cursor-pointer bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 transition duration-300">
+						PDFを選択
+					</label>
+					<input type="file" id="pdf-upload" class="hidden" accept="application/pdf">
+				</div>
+				<div id="pdf-controls" class="hidden flex-wrap items-center gap-4">
+					<button id="prev-page" class="control-btn">&lt; 前</button>
+					<div class="flex items-center gap-2">
+						<input type="number" id="page-num-input"
+							class="w-16 text-center border border-gray-300 rounded-md p-1">
+						<span id="page-count" class="text-gray-700">/ 0</span>
+					</div>
+					<button id="next-page" class="control-btn">次 &gt;</button>
+					<button id="zoom-out" class="control-btn">-</button>
+					<span class="text-gray-700" id="zoom-level">100%</span>
+					<button id="zoom-in" class="control-btn">+</button>
+					<button id="rotate-page" class="control-btn">回転</button>
+				</div>
+			</div>
+
+			<!-- PDF Viewer and Initial Prompt -->
+			<div id="viewer-container" class="flex justify-center items-center min-h-[60vh] bg-gray-50 rounded-lg p-4">
+				<div id="initial-prompt" class="text-center">
+					<h2 class="text-xl font-semibold text-gray-700">ここにPDFが表示されます</h2>
+					<p class="text-gray-500 mt-2">上の「PDFを選択」ボタンからファイルを選んでください。</p>
+				</div>
+				<div id="pdf-viewer" class="hidden">
+					<canvas id="pdf-canvas"></canvas>
+				</div>
+				<div id="loading-indicator" class="hidden text-center">
+					<div class="loader mx-auto"></div>
+					<p class="mt-4 text-gray-600">処理中です...</p>
+				</div>
+			</div>
+
+			<!-- PNG Conversion Section -->
+			<div id="conversion-section" class="hidden mt-8 border-t border-gray-200 pt-6">
+				<div class="flex flex-col sm:flex-row items-center justify-center gap-4">
+					<button id="convert-to-png"
+						class="bg-green-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-green-700 transition duration-300">
+						全ページをPNGに変換
+					</button>
+					<button id="download-zip"
+						class="hidden bg-purple-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-purple-700 transition duration-300">
+						ZIPで一括ダウンロード
+					</button>
+				</div>
+				<div id="png-output" class="mt-6 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+					<!-- Generated PNGs will be appended here -->
+				</div>
+			</div>
+		</main>
+	</div>
+
+	<script>
+		// Set workerSrc for PDF.js
+		pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js`;
+
+		// DOM Elements
+		const uploadInput = document.getElementById('pdf-upload');
+		const pdfControls = document.getElementById('pdf-controls');
+		const initialPrompt = document.getElementById('initial-prompt');
+		const pdfViewer = document.getElementById('pdf-viewer');
+		const canvas = document.getElementById('pdf-canvas');
+		const prevPageBtn = document.getElementById('prev-page');
+		const nextPageBtn = document.getElementById('next-page');
+		const pageNumInput = document.getElementById('page-num-input');
+		const pageCountSpan = document.getElementById('page-count');
+		const zoomOutBtn = document.getElementById('zoom-out');
+		const zoomInBtn = document.getElementById('zoom-in');
+		const zoomLevelSpan = document.getElementById('zoom-level');
+		const rotateBtn = document.getElementById('rotate-page');
+		const conversionSection = document.getElementById('conversion-section');
+		const convertToPngBtn = document.getElementById('convert-to-png');
+		const downloadZipBtn = document.getElementById('download-zip');
+		const pngOutput = document.getElementById('png-output');
+		const loadingIndicator = document.getElementById('loading-indicator');
+
+		// State variables
+		let pdfDoc = null;
+		let pageNum = 1;
+		let pageRendering = false;
+		let pageNumPending = null;
+		let scale = 1.0;
+		let rotation = 0;
+		let pngBlobs = []; // To store generated PNGs for zipping
+
+		/**
+		 * Renders a specific page of the PDF.
+		 * @param {number} num The page number to render.
+		 */
+		const renderPage = async (num) => {
+			pageRendering = true;
+			try {
+				const page = await pdfDoc.getPage(num);
+				const viewport = page.getViewport({ scale, rotation });
+				const context = canvas.getContext('2d');
+				canvas.height = viewport.height;
+				canvas.width = viewport.width;
+
+				const renderContext = {
+					canvasContext: context,
+					viewport: viewport
+				};
+				await page.render(renderContext).promise;
+
+			} catch (error) {
+				console.error('Error rendering page:', error);
+			} finally {
+				pageRendering = false;
+				if (pageNumPending !== null) {
+					renderPage(pageNumPending);
+					pageNumPending = null;
+				}
+			}
+			pageNumInput.value = num;
+		};
+
+		/**
+		 * Queues a page to be rendered. Prevents multiple renders at once.
+		 * @param {number} num The page number to queue.
+		 */
+		const queueRenderPage = (num) => {
+			if (pageRendering) {
+				pageNumPending = num;
+			} else {
+				renderPage(num);
+			}
+		};
+
+		// --- Event Listeners ---
+
+		// Handle PDF file upload
+		uploadInput.addEventListener('change', (e) => {
+			const file = e.target.files[0];
+			if (file.type !== 'application/pdf') {
+				alert('PDFファイルを選択してください。');
+				return;
+			}
+
+			const fileReader = new FileReader();
+			fileReader.onload = async (event) => {
+				const typedarray = new Uint8Array(event.target.result);
+				try {
+					pdfDoc = await pdfjsLib.getDocument(typedarray).promise;
+					pageNum = 1;
+					scale = 1.0;
+					rotation = 0;
+					pngBlobs = [];
+
+					initialPrompt.classList.add('hidden');
+					pdfViewer.classList.remove('hidden');
+					pdfControls.classList.remove('hidden');
+					conversionSection.classList.remove('hidden');
+					pngOutput.innerHTML = '';
+					downloadZipBtn.classList.add('hidden');
+
+					pageCountSpan.textContent = `/ ${pdfDoc.numPages}`;
+					renderPage(pageNum);
+				} catch (error) {
+					console.error('Error loading PDF:', error);
+					alert('PDFの読み込みに失敗しました。');
+				}
+			};
+			fileReader.readAsArrayBuffer(file);
+		});
+
+		// Previous page button
+		prevPageBtn.addEventListener('click', () => {
+			if (pageNum <= 1) return;
+			pageNum--;
+			queueRenderPage(pageNum);
+		});
+
+		// Next page button
+		nextPageBtn.addEventListener('click', () => {
+			if (pageNum >= pdfDoc.numPages) return;
+			pageNum++;
+			queueRenderPage(pageNum);
+		});
+
+		// Page number input
+		pageNumInput.addEventListener('change', (e) => {
+			const desiredPage = parseInt(e.target.value, 10);
+			if (desiredPage > 0 && desiredPage <= pdfDoc.numPages) {
+				pageNum = desiredPage;
+				queueRenderPage(pageNum);
+			} else {
+				e.target.value = pageNum; // Reset to current page if invalid
+			}
+		});
+
+		// Zoom out button
+		zoomOutBtn.addEventListener('click', () => {
+			if (scale <= 0.25) return;
+			scale -= 0.25;
+			zoomLevelSpan.textContent = `${Math.round(scale * 100)}%`;
+			queueRenderPage(pageNum);
+		});
+
+		// Zoom in button
+		zoomInBtn.addEventListener('click', () => {
+			if (scale >= 3.0) return;
+			scale += 0.25;
+			zoomLevelSpan.textContent = `${Math.round(scale * 100)}%`;
+			queueRenderPage(pageNum);
+		});
+
+		// Rotate page button
+		rotateBtn.addEventListener('click', () => {
+			rotation = (rotation + 90) % 360;
+			queueRenderPage(pageNum);
+		});
+
+		// Convert to PNG button
+		convertToPngBtn.addEventListener('click', async () => {
+			if (!pdfDoc) return;
+
+			loadingIndicator.classList.remove('hidden');
+			pdfViewer.classList.add('hidden');
+			pngOutput.innerHTML = '';
+			pngBlobs = [];
+
+			// Use a higher scale for better quality PNGs
+			const pngScale = 2.0;
+
+			for (let i = 1; i <= pdfDoc.numPages; i++) {
+				try {
+					const page = await pdfDoc.getPage(i);
+					const viewport = page.getViewport({ scale: pngScale });
+
+					// Create a temporary canvas for each page
+					const tempCanvas = document.createElement('canvas');
+					const tempContext = tempCanvas.getContext('2d');
+					tempCanvas.height = viewport.height;
+					tempCanvas.width = viewport.width;
+
+					await page.render({ canvasContext: tempContext, viewport }).promise;
+
+					// Create image element for preview
+					const img = document.createElement('img');
+					img.src = tempCanvas.toDataURL('image/png');
+					img.className = 'w-full h-auto rounded-md border border-gray-300 shadow-sm';
+
+					// Create a container for the image and its label
+					const imgContainer = document.createElement('div');
+					imgContainer.className = 'text-center';
+					const label = document.createElement('p');
+					label.textContent = `ページ ${i}`;
+					label.className = 'text-sm text-gray-600 mt-1';
+
+					imgContainer.appendChild(img);
+					imgContainer.appendChild(label);
+					pngOutput.appendChild(imgContainer);
+
+					// Store blob for zipping
+					tempCanvas.toBlob((blob) => {
+						pngBlobs.push({ name: `page_${i}.png`, blob });
+					}, 'image/png');
+
+				} catch (error) {
+					console.error(`Error converting page ${i} to PNG:`, error);
+				}
+			}
+
+			loadingIndicator.classList.add('hidden');
+			pdfViewer.classList.remove('hidden'); // Show the main viewer again
+			downloadZipBtn.classList.remove('hidden');
+		});
+
+		// Download ZIP button
+		downloadZipBtn.addEventListener('click', async () => {
+			if (pngBlobs.length === 0) return;
+
+			const zip = new JSZip();
+			pngBlobs.forEach(item => {
+				zip.file(item.name, item.blob);
+			});
+
+			try {
+				const content = await zip.generateAsync({ type: 'blob' });
+				const link = document.createElement('a');
+				link.href = URL.createObjectURL(content);
+				link.download = 'converted_pages.zip';
+				document.body.appendChild(link);
+				link.click();
+				document.body.removeChild(link);
+			} catch (error) {
+				console.error('Error creating ZIP file:', error);
+			}
+		});
+
+		// Add common styling to control buttons for consistency
+		document.querySelectorAll('.control-btn').forEach(btn => {
+			btn.classList.add('bg-gray-200', 'text-gray-800', 'font-semibold', 'py-1', 'px-3', 'rounded-md', 'hover:bg-gray-300', 'transition', 'duration-200');
+		});
+
+	</script>
+</body>
+
+</html>
